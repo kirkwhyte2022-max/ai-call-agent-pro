@@ -20,6 +20,32 @@ const vonage = new Vonage({
 });
 
 // ============================
+// 🌐 Load Website Content (Chacha Boy Logistics)
+// ============================
+let siteContent = "Welcome to Chacha Boy Logistics. We are a delivery and courier service based in Jamaica.";
+
+async function loadSiteContent() {
+  try {
+    console.log("🌍 Fetching website content...");
+    const response = await fetch(process.env.SITE_URL);
+    const html = await response.text();
+
+    // Extract visible text from HTML (simple regex cleanup)
+    siteContent = html
+      .replace(/<script[^>]*>[\s\S]*?<\/script>/gi, "")
+      .replace(/<style[^>]*>[\s\S]*?<\/style>/gi, "")
+      .replace(/<\/?[^>]+(>|$)/g, "")
+      .replace(/\s+/g, " ")
+      .slice(0, 8000);
+
+    console.log("✅ Website content loaded.");
+  } catch (err) {
+    console.error("❌ Failed to fetch website:", err);
+  }
+}
+await loadSiteContent();
+
+// ============================
 // 🕹️ Route 1: Incoming Call → Connect to Live WebSocket
 // ============================
 app.get("/vonage/answer", (req, res) => {
@@ -57,25 +83,29 @@ const wss = new WebSocketServer({ noServer: true });
 wss.on("connection", (ws) => {
   console.log("🔗 Vonage connected to WebSocket stream");
 
-  // Create a live OpenAI Realtime session
   let openaiWs = null;
 
   (async () => {
-    const response = await fetch("https://api.openai.com/v1/realtime?model=gpt-4o-realtime-preview-2024-12-01", {
+    const response = await fetch("https://api.openai.com/v1/realtime/sessions", {
       method: "POST",
       headers: {
         Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
         "Content-Type": "application/json",
       },
       body: JSON.stringify({
+        model: "gpt-4o-realtime-preview-2024-12-01",
         voice: "none",
-        input_audio_format: "pcm16",
-        output_audio_format: "none",
+        instructions: `
+You are a helpful AI call agent for Chacha Boy Logistics in Jamaica.
+Use the company’s website information to answer questions accurately and naturally.
+Keep responses short, friendly, and conversational.
+Website Info:
+${siteContent}`,
       }),
     });
 
-    const { client_secret } = await response.json();
-    const openaiUrl = `wss://api.openai.com/v1/realtime?model=gpt-4o-realtime-preview-2024-12-01&client_secret=${client_secret}`;
+    const session = await response.json();
+    const openaiUrl = session.client_secret.value;
 
     openaiWs = new WebSocket(openaiUrl, {
       headers: { Authorization: `Bearer ${process.env.OPENAI_API_KEY}` },
@@ -85,26 +115,21 @@ wss.on("connection", (ws) => {
     openaiWs.on("message", (msg) => console.log("📨 OpenAI Message:", msg.toString()));
   })();
 
-  // Vonage → OpenAI audio
   ws.on("message", async (message) => {
     const msg = JSON.parse(message.toString());
 
     if (msg.event === "media" && openaiWs?.readyState === 1) {
-      // Send raw audio chunk to OpenAI
       openaiWs.send(
         JSON.stringify({
           type: "input_audio_buffer.append",
-          audio: msg.media.payload, // base64 PCM16
+          audio: msg.media.payload,
         })
       );
     }
 
-    if (msg.event === "stop") {
-      // Process the final response from OpenAI
-      if (openaiWs?.readyState === 1) {
-        openaiWs.send(JSON.stringify({ type: "input_audio_buffer.commit" }));
-        openaiWs.send(JSON.stringify({ type: "response.create" }));
-      }
+    if (msg.event === "stop" && openaiWs?.readyState === 1) {
+      openaiWs.send(JSON.stringify({ type: "input_audio_buffer.commit" }));
+      openaiWs.send(JSON.stringify({ type: "response.create" }));
     }
   });
 
@@ -117,7 +142,7 @@ wss.on("connection", (ws) => {
       if (aiText) {
         console.log("🧠 AI Response:", aiText);
 
-        // Convert to realistic voice with ElevenLabs
+        // Convert to realistic voice using ElevenLabs
         const ttsRes = await fetch("https://api.elevenlabs.io/v1/text-to-speech/Rachel", {
           method: "POST",
           headers: {
@@ -152,10 +177,10 @@ wss.on("connection", (ws) => {
 // ============================
 // 🩺 Health Check
 // ============================
-app.get("/", (req, res) => res.send("✅ AI Call Agent Pro (Realtime) is running"));
+app.get("/", (req, res) => res.send("✅ AI Call Agent Pro (Realtime + Website Context) is running"));
 
 // ============================
-// 🚀 Start Server + Upgrade to WebSocket
+// 🚀 Start Server + WebSocket Upgrade
 // ============================
 const server = app.listen(process.env.PORT || 3000, () =>
   console.log(`🚀 Server running on port ${process.env.PORT || 3000}`)
