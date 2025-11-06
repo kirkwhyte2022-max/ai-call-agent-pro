@@ -1,21 +1,28 @@
 {
   "name": "ai-call-agent-pro",
   "version": "1.0.0",
-  "description": "AI Call Agent powered by Vonage and OpenAI for ChachaBoy Logistics.",
+  "description": "AI Call Agent for ChachaBoy Logistics using Vonage Voice API and OpenAI Assistant with realistic conversational voice.",
   "main": "server.js",
+  "type": "module",
   "scripts": {
-    "start": "node server.js"
+    "start": "node server.js",
+    "dev": "nodemon server.js"
   },
   "dependencies": {
     "@vonage/server-sdk": "^3.16.0",
+    "axios": "^1.7.2",
     "body-parser": "^1.20.2",
-    "dotenv": "^16.3.1",
+    "dotenv": "^16.4.5",
     "express": "^4.18.2",
     "node-fetch": "^3.3.2",
     "ws": "^8.18.0"
   },
-  "engines": {
-    "node": ">=18"
+  "devDependencies": {
+    "nodemon": "^3.1.4"
   },
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "author": "ai-call-agent-pro",
   "license": "MIT"
 }
