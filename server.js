@@ -21,7 +21,9 @@ app.get("/vonage/answer", (req, res) => {
   const ncco = [
     {
       action: "talk",
-      text: "Hi, this is Chacha Boy Logistics. Please ask your question after the beep."
+  text: "Hi, this is Chacha Boy Logistics. Please ask your question after the beep.",
+  voiceName: "Joanna", // Try “Amy”, “Brian”, or “Matthew” for different accents
+  language: "en-US"
     },
     {
       action: "record",
