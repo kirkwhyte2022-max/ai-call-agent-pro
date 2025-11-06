@@ -1,55 +1,70 @@
-const express = require("express");
-const bodyParser = require("body-parser");
-const dotenv = require("dotenv");
-const { Vonage } = require("@vonage/server-sdk");
-const fetch = require("node-fetch");
-const fs = require("fs");
-const path = require("path");
-const axios = require("axios");
+// server.js
+import express from "express";
+import bodyParser from "body-parser";
+import dotenv from "dotenv";
+import { Vonage } from "@vonage/server-sdk";
+import axios from "axios";
+import fs from "fs";
+import path from "path";
+import { fileURLToPath } from "url";
 
 dotenv.config();
+
+// =====================
+// Constants & Setup
+// =====================
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+
+const PORT = process.env.PORT || 10000;
+const BASE_URL = process.env.BASE_URL || "https://ai-call-agent-pro.onrender.com";
+
+// Initialize Vonage SDK
+const vonage = new Vonage({
+  apiKey: process.env.VONAGE_API_KEY,
+  apiSecret: process.env.VONAGE_API_SECRET,
+  applicationId: process.env.VONAGE_APPLICATION_ID,
+  privateKey: fs.readFileSync(process.env.VONAGE_PRIVATE_KEY_PATH)
+});
 
 const app = express();
 app.use(bodyParser.json());
 
-const PORT = process.env.PORT || 3000;
-const VONAGE_API_KEY = process.env.VONAGE_API_KEY;
-const VONAGE_API_SECRET = process.env.VONAGE_API_SECRET;
-const VONAGE_APPLICATION_ID = process.env.VONAGE_APPLICATION_ID;
-const VONAGE_PRIVATE_KEY_PATH = process.env.VONAGE_PRIVATE_KEY_PATH;
-const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
-
-const vonage = new Vonage({
-  apiKey: VONAGE_API_KEY,
-  apiSecret: VONAGE_API_SECRET,
-  applicationId: VONAGE_APPLICATION_ID,
-  privateKey: VONAGE_PRIVATE_KEY_PATH
-});
+// Serve static files (generated audio)
+app.use(express.static(path.join(__dirname, "public")));
 
 // =====================
-// VONAGE WEBHOOKS
+// Vonage Webhooks
 // =====================
+
+// Answer URL: called when someone calls your Vonage number
 app.get("/webhooks/answer", (req, res) => {
   const ncco = [
     {
       action: "talk",
-      text: "Hello! Thank you for calling ChachaBoy Logistics. I'm your virtual assistant. How can I help you today?"
+      text: "Hello! This is your AI assistant for ChachaBoy Logistics. How may I assist you today?",
+      language: "en-US",
+      style: 2
     },
     {
       action: "input",
-      eventUrl: [`${req.protocol}://${req.get("host")}/webhooks/input`],
+      eventUrl: [`${BASE_URL}/webhooks/input`],
       speech: { endOnSilence: 1, language: "en-US" }
     }
   ];
   res.json(ncco);
 });
 
+// Input URL: called when the caller speaks
 app.post("/webhooks/input", async (req, res) => {
   try {
     const speech = req.body.speech?.results?.[0]?.text || "";
     console.log("Caller said:", speech);
 
+    // Generate AI response
     const aiReply = await getAIResponse(speech);
+
+    // Generate TTS audio
     const ttsUrl = await generateSpeech(aiReply);
 
     const ncco = [
@@ -59,65 +74,73 @@ app.post("/webhooks/input", async (req, res) => {
       },
       {
         action: "input",
-        eventUrl: [`${req.protocol}://${req.get("host")}/webhooks/input`],
+        eventUrl: [`${BASE_URL}/webhooks/input`],
         speech: { endOnSilence: 1, language: "en-US" }
       }
     ];
+
     res.json(ncco);
-  } catch (error) {
-    console.error("Error handling input:", error);
+  } catch (err) {
+    console.error("Error handling input:", err);
     res.status(500).send("Server error");
   }
 });
 
+// Event URL: logs call events
 app.post("/webhooks/event", (req, res) => {
-  console.log("Event:", req.body);
+  console.log("Vonage Event:", req.body);
   res.status(200).end();
 });
 
+// Test endpoint
+app.get("/", (req, res) => {
+  res.send("✅ AI Call Agent Pro is running.");
+});
+
 // =====================
-// AI CHAT RESPONSE
+// AI Chat with OpenAI
 // =====================
 async function getAIResponse(message) {
-  if (!OPENAI_API_KEY)
-    return "Sorry, my AI brain is currently offline. Please try again later.";
+  if (!process.env.OPENAI_API_KEY) {
+    return "Sorry, my AI brain is offline. Please try again later.";
+  }
 
   try {
-    const response = await fetch("https://api.openai.com/v1/chat/completions", {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${OPENAI_API_KEY}`,
-        "Content-Type": "application/json"
-      },
-      body: JSON.stringify({
+    const response = await axios.post(
+      "https://api.openai.com/v1/chat/completions",
+      {
         model: "gpt-4o-mini",
         messages: [
           {
             role: "system",
             content:
-              "You are a friendly, natural-sounding virtual assistant for ChachaBoy Logistics. Answer like a real customer service representative, keep responses short and conversational."
+              "You are a friendly, natural-sounding virtual assistant for ChachaBoy Logistics. Respond like a real customer service representative."
           },
           { role: "user", content: message }
         ]
-      })
-    });
-    const data = await response.json();
-    return (
-      data.choices?.[0]?.message?.content ||
-      "I'm sorry, I didn’t catch that. Could you repeat?"
+      },
+      {
+        headers: {
+          Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
+          "Content-Type": "application/json"
+        }
+      }
     );
+
+    return response.data.choices?.[0]?.message?.content || "I'm sorry, could you repeat that?";
   } catch (err) {
-    console.error("AI fetch error:", err);
-    return "I'm having trouble connecting to my AI brain.";
+    console.error("AI error:", err.response?.data || err.message);
+    return "I'm having trouble connecting to my AI brain. Please try again later.";
   }
 }
 
 // =====================
-// TEXT-TO-SPEECH (OpenAI)
+// OpenAI Text-to-Speech (TTS)
 // =====================
 async function generateSpeech(text) {
   try {
     console.log("Generating speech for:", text);
+
     const response = await axios.post(
       "https://api.openai.com/v1/audio/speech",
       {
@@ -127,29 +150,31 @@ async function generateSpeech(text) {
       },
       {
         headers: {
-          Authorization: `Bearer ${OPENAI_API_KEY}`,
+          Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
           "Content-Type": "application/json"
         },
         responseType: "arraybuffer"
       }
     );
 
+    // Save audio locally
     const fileName = `voice_${Date.now()}.mp3`;
-    const filePath = path.join(__dirname, "public", fileName);
-    fs.mkdirSync(path.join(__dirname, "public"), { recursive: true });
+    const dirPath = path.join(__dirname, "public");
+    fs.mkdirSync(dirPath, { recursive: true });
+    const filePath = path.join(dirPath, fileName);
     fs.writeFileSync(filePath, response.data);
 
-    // Return a public URL for Vonage to stream
-    return `${process.env.BASE_URL || "https://ai-call-agent-pro.onrender.com"}/${fileName}`;
-  } catch (error) {
-    console.error("TTS error:", error.response?.data || error.message);
+    // Return public URL for Vonage to stream
+    return `${BASE_URL}/${fileName}`;
+  } catch (err) {
+    console.error("TTS error:", err.response?.data || err.message);
     return null;
   }
 }
 
-// Serve generated audio
-app.use(express.static(path.join(__dirname, "public")));
-
-app.listen(PORT, () =>
-  console.log(`✅ AI Call Agent running with realistic voice on ${PORT}`)
-);
+// =====================
+// Start server
+// =====================
+app.listen(PORT, () => {
+  console.log(`✅ AI Call Agent running with realistic voice on port ${PORT}`);
+});
